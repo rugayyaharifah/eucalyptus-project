@@ -1,0 +1,1 @@
+C:\Lockin\IF4A\balanced_meal\build\app\intermediates\cxx\RelWithDebInfo\g625511y\obj\arm64-v8a

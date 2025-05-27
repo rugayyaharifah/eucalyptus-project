@@ -1,0 +1,2 @@
+C:/Lockin/IF4A/balanced_meal/android/app/.cxx/RelWithDebInfo/g625511y/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Lockin/IF4A/balanced_meal/android/app/.cxx/RelWithDebInfo/g625511y/armeabi-v7a/CMakeFiles/rebuild_cache.dir

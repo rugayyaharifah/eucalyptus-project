@@ -1,0 +1,926 @@
+// lib/screens/recipe_detail_screen.dart
+import 'dart:convert';
+
+import 'package:balanced_meal/models/comment_model.dart';
+import 'package:balanced_meal/models/recipe_model.dart';
+import 'package:balanced_meal/providers/user_role_provider.dart';
+import 'package:balanced_meal/services/comment_service.dart';
+import 'package:balanced_meal/services/favorite_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
+
+class RecipeDetailScreen extends ConsumerWidget {
+  final String recipeId;
+  final Color _primaryColor = const Color(0xFFFFC107); // Amber 500
+  final Color _secondaryColor = const Color(0xFFFFF3E0); // Amber 50
+  final Color _accentColor = const Color(0xFFFFA000); // Amber 700
+
+  const RecipeDetailScreen({super.key, required this.recipeId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = FirebaseAuth.instance.currentUser;
+    final isAdmin = ref.watch(isAdminProvider);
+
+    return Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        iconTheme: IconThemeData(color: _accentColor),
+        actions: [
+          if (user != null)
+            StreamBuilder<bool>(
+              stream: FavoriteService().isFavoriteStream(user.uid, recipeId),
+              builder: (context, snapshot) {
+                final isFavorite = snapshot.data ?? false;
+                return IconButton(
+                  icon: Icon(
+                    isFavorite ? Icons.favorite : Icons.favorite_border,
+                    color: isFavorite ? Colors.red : _accentColor,
+                  ),
+                  onPressed: () async {
+                    if (isFavorite) {
+                      await FavoriteService()
+                          .removeFavorite(user.uid, recipeId);
+                    } else {
+                      await FavoriteService().addFavorite(user.uid, recipeId);
+                    }
+                  },
+                );
+              },
+            ),
+        ],
+      ),
+      body: FutureBuilder<Recipe>(
+        future: _getRecipe(context),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(
+                child: CircularProgressIndicator(color: _accentColor));
+          }
+          if (!snapshot.hasData) {
+            return Center(
+              child: Text(
+                'Recipe not found',
+                style: TextStyle(color: Colors.grey[600]),
+              ),
+            );
+          }
+
+          final recipe = snapshot.data!;
+          return _RecipeDetailContent(
+            recipe: recipe,
+            isAdmin: isAdmin,
+            user: user,
+            primaryColor: _primaryColor,
+            secondaryColor: _secondaryColor,
+            accentColor: _accentColor,
+          );
+        },
+      ),
+    );
+  }
+
+ 
+
+  Future<Recipe> _getRecipe(BuildContext context) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('recipes')
+        .doc(recipeId)
+        .get();
+    return Recipe.fromMap(doc.data()!);
+  }
+
+  
+
+ 
+}
+
+class _RecipeDetailContent extends StatefulWidget {
+  final Recipe recipe;
+  final bool isAdmin;
+  final User? user;
+  final Color primaryColor;
+  final Color secondaryColor;
+  final Color accentColor;
+
+  const _RecipeDetailContent({
+    required this.recipe,
+    required this.isAdmin,
+    required this.user,
+    required this.primaryColor,
+    required this.secondaryColor,
+    required this.accentColor,
+  });
+
+  @override
+  State<_RecipeDetailContent> createState() => _RecipeDetailContentState();
+}
+
+class _RecipeDetailContentState extends State<_RecipeDetailContent> {
+  bool _isLoadingStores = false;
+  List<dynamic> _nearbyStores = [];
+  Position? _currentPosition;
+
+  double _selectedRadius = 1000; // default 2km
+  final List<double> _radiusOptions = [500, 1000, 2000, 3000, 4000, 5000];
+
+  Future<void> _openStoreInMaps(String storeName, String address) async {
+    final query = Uri.encodeComponent('$storeName $address');
+    final googleMapsUrl =
+        'https://www.google.com/maps/search/?api=1&query=$query';
+
+    if (await canLaunchUrl(Uri.parse(googleMapsUrl))) {
+      await launchUrl(Uri.parse(googleMapsUrl));
+    } else {
+      throw 'Could not launch $googleMapsUrl';
+    }
+  }
+
+  Future<void> _getUserLocation() async {
+    setState(() => _isLoadingStores = true);
+
+    // Check if location services are enabled
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Enable location services in device settings')),
+        );
+      }
+      return;
+    }
+
+    // Check permissions
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Location permissions permanently denied')),
+        );
+      }
+      return;
+    }
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.whileInUse &&
+          permission != LocationPermission.always) {
+        return;
+      }
+    }
+
+    try {
+      _currentPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      );
+      await _findNearbyStores();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Location error: ${e.toString()}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingStores = false);
+    }
+  }
+
+  Future<void> _findNearbyStores() async {
+    debugPrint('Finding nearby stores for title: ${widget.recipe.title}');
+    if (_currentPosition == null) return;
+
+    try {
+      final apiKey = "AIzaSyDXu_xLLUSKPcnJUxr4BtAjadr69WS8rIo";
+      final url = Uri.parse(
+          'https://maps.googleapis.com/maps/api/place/nearbysearch/json?'
+          'location=${_currentPosition!.latitude},${_currentPosition!.longitude}'
+          '&radius=$_selectedRadius'
+          '&keyword=${widget.recipe.title}'
+          '&key=$apiKey');
+
+      final response = await http.get(url);
+      final data = json.decode(response.body);
+      if (data['status'] != 'OK') return;
+
+      // Process and sort stores by distance
+      final stores = (data['results'] as List?)?.map((store) {
+            final lat = store['geometry']['location']['lat']?.toDouble() ?? 0;
+            final lng = store['geometry']['location']['lng']?.toDouble() ?? 0;
+            final distance = _calculateDistance(lat, lng);
+
+            return {
+              'name': store['name']?.toString() ?? 'Unknown Store',
+              'vicinity':
+                  store['vicinity']?.toString() ?? 'Address not available',
+              'geometry': store['geometry'] ??
+                  {
+                    'location': {'lat': lat, 'lng': lng}
+                  },
+              'distance': distance,
+            };
+          }).toList() ??
+          [];
+
+      // Sort stores by distance (nearest first)
+      stores.sort((a, b) =>
+          (a['distance'] as double).compareTo(b['distance'] as double));
+
+      setState(() {
+        _nearbyStores = stores;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error finding stores: $e')),
+        );
+      }
+    }
+  }
+
+  double _calculateDistance(double lat, double lng) {
+    if (_currentPosition == null) return 0;
+    return Geolocator.distanceBetween(
+          _currentPosition!.latitude,
+          _currentPosition!.longitude,
+          lat,
+          lng,
+        ) /
+        1000; // Convert to km
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+     
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Recipe Image
+          Stack(
+            children: [
+              // Background Image with modern treatment
+              Container(
+                height: 380, // Slightly taller for better proportions
+                width: double.infinity,
+                decoration: BoxDecoration(
+                   // More rounded corners
+                  color: Colors.grey[100],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  child: widget.recipe.imageUrl != null
+                      ? Image.network(
+                          widget.recipe.imageUrl!,
+                          fit: BoxFit.cover,
+                          loadingBuilder: (context, child, progress) {
+                            return AnimatedContainer(
+                              duration: Duration(milliseconds: 300),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.grey[200]!,
+                                    Colors.grey[300]!,
+                                  ],
+                                ),
+                              ),
+                              child: progress == null
+                                  ? child
+                                  : Center(
+                                      child: CircularProgressIndicator(
+                                        value: progress.expectedTotalBytes !=
+                                                null
+                                            ? progress.cumulativeBytesLoaded /
+                                                progress.expectedTotalBytes!
+                                            : null,
+                                        color: widget.primaryColor,
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  widget.primaryColor.withOpacity(0.1),
+                                  widget.primaryColor.withOpacity(0.3),
+                                ],
+                              ),
+                            ),
+                            child: Center(
+                              child: Icon(Icons.broken_image,
+                                  size: 50,
+                                  color: widget.primaryColor.withOpacity(0.5)),
+                            ),
+                          ),
+                        )
+                      : Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                widget.primaryColor.withOpacity(0.1),
+                                widget.primaryColor.withOpacity(0.3),
+                              ],
+                            ),
+                          ),
+                          child: Center(
+                            child: Icon(Icons.fastfood,
+                                size: 50, color: widget.primaryColor),
+                          ),
+                        ),
+                ),
+              ),
+
+              // Diagonal gradient overlay
+              Positioned.fill(
+                child: ClipRRect(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withOpacity(0.5),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              // Content with modern typography
+              Positioned(
+                bottom: 20,
+                left: 20,
+                right: 20,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Title with subtle text shadow
+                    Text(
+                      widget.recipe.title,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800, // More bold
+                        letterSpacing: 0.5,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black.withOpacity(0.5),
+                            blurRadius: 6,
+                            offset: Offset(1, 1),
+                          )
+                        ],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+
+                    SizedBox(height: 8),
+
+                    // Cooking time with modern chip design
+                    Container(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: widget.primaryColor,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.timer, size: 16, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text(
+                            '${widget.recipe.cookingTime} mins',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Subtle floating action button
+            ],
+          ),
+
+
+
+          const SizedBox(height: 20),
+          
+          Padding(padding: const EdgeInsets.all( 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.7),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 10,
+                          offset: Offset(0, 4),
+                        )
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Description',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          widget.recipe.description,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: Colors.grey[800],
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Ingredients Section
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: widget.secondaryColor,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Ingredients',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: widget.accentColor,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...widget.recipe.ingredients.map((ingredient) =>
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(top: 4, right: 8),
+                                    child: Icon(
+                                      Icons.circle,
+                                      size: 8,
+                                      color: widget.accentColor,
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      ingredient,
+                                      style: const TextStyle(fontSize: 15),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Steps Section
+                  const Text(
+                    'Steps',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...widget.recipe.steps.asMap().entries.map(
+                        (entry) => Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: widget.primaryColor,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${entry.key + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  entry.value,
+                                  style: const TextStyle(fontSize: 15),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  const SizedBox(height: 24),
+
+                  // Nearby Stores Section
+                  _buildNearbyStoresSection(),
+                  const SizedBox(height: 24),
+                  const Divider(height: 1),
+                  const SizedBox(height: 16),
+
+                  // Comments Section
+                  _buildCommentSection(context),
+              ],
+            )
+          ),
+// Glassy Description Box
+          
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNearbyStoresSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Find The Food Nearby',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: widget.accentColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (_currentPosition != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                'Search Radius:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 12),
+              DropdownButton<double>(
+                value: _selectedRadius,
+                items: _radiusOptions.map((radius) {
+                  return DropdownMenuItem<double>(
+                    value: radius,
+                    child: Text('${(radius / 1000).toStringAsFixed(1)} km'),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _selectedRadius = value;
+                      _findNearbyStores(); // refresh search with new radius
+                    });
+                  }
+                },
+              ),
+            ],
+          ),
+        ],
+        _isLoadingStores
+            ? Center(
+                child: CircularProgressIndicator(color: widget.accentColor))
+            : _currentPosition == null
+                ? ElevatedButton(
+                    onPressed: _getUserLocation,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: widget.accentColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text('Find Nearby Stores'),
+                  )
+                : _nearbyStores.isEmpty
+                    ? Text(
+                        'No nearby stores found for this recipe',
+                        style: TextStyle(color: Colors.grey[600]),
+                      )
+                    : Column(
+                        children: _nearbyStores
+                            .map((store) => Card(
+                                  margin:
+                                      const EdgeInsets.symmetric(vertical: 4),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(8),
+                                    onTap: () {
+                                      _openStoreInMaps(store['name'],
+                                          store['vicinity'] ?? '');
+                                    },
+                                    child: ListTile(
+                                      leading: Icon(Icons.store,
+                                          color: widget.accentColor),
+                                      title: Text(store['name']),
+                                      subtitle: Text(store['vicinity'] ?? ''),
+                                      trailing: Text(
+                                        '${(store['distance'] as double).toStringAsFixed(1)} km',
+                                        style: TextStyle(
+                                          color: widget.accentColor,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ))
+                            .toList(),
+                      )
+      ],
+    );
+  }
+
+  Widget _buildCommentSection(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Comments',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: widget.accentColor,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (widget.user != null)
+          CommentInputField(
+            recipeId: widget.recipe.id,
+            accentColor: widget.accentColor,
+          ),
+        if (widget.user == null)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Log in to leave a comment',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ),
+        const SizedBox(height: 24),
+        StreamBuilder<List<Comment>>(
+          stream: CommentService().getComments(widget.recipe.id),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Text(
+                'Error loading comments',
+                style: TextStyle(color: Colors.grey[600]),
+              );
+            }
+
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Center(
+                  child: CircularProgressIndicator(color: widget.accentColor));
+            }
+
+            final comments = snapshot.data ?? [];
+
+            if (comments.isEmpty) {
+              return Center(
+                child: Text(
+                  'No comments yet',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              );
+            }
+
+            return ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: comments.length,
+              itemBuilder: (context, index) {
+                final comment = comments[index];
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.1),
+                        spreadRadius: 1,
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.all(12),
+                    leading: CircleAvatar(
+                      backgroundColor: widget.secondaryColor,
+                      child: Icon(Icons.person, color: widget.accentColor),
+                    ),
+                    title: FutureBuilder(
+                      future: _getUsername(comment.userId),
+                      builder: (context, snapshot) {
+                        return Text(
+                          snapshot.data ?? 'Anonymous',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        );
+                      },
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 4),
+                        Text(comment.text),
+                        const SizedBox(height: 8),
+                        Text(
+                          DateFormat.yMMMd().add_jm().format(comment.timestamp),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing:
+                        (widget.isAdmin || widget.user?.uid == comment.userId)
+                            ? IconButton(
+                                icon: Icon(Icons.delete,
+                                    size: 20, color: Colors.red[400]),
+                                onPressed: () =>
+                                    _showDeleteDialog(context, comment.id),
+                              )
+                            : null,
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Future<String?> _getUsername(String userId) async {
+    final doc =
+        await FirebaseFirestore.instance.collection('users').doc(userId).get();
+    return doc.get('name');
+  }
+
+  void _showDeleteDialog(BuildContext context, String commentId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Comment'),
+        content: const Text('Are you sure you want to delete this comment?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: widget.accentColor)),
+          ),
+          TextButton(
+            onPressed: () {
+              CommentService().deleteComment(commentId);
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CommentInputField extends StatefulWidget {
+  final String recipeId;
+  final Color accentColor;
+
+  const CommentInputField({
+    super.key,
+    required this.recipeId,
+    required this.accentColor,
+  });
+
+  @override
+  State<CommentInputField> createState() => _CommentInputFieldState();
+}
+
+class _CommentInputFieldState extends State<CommentInputField> {
+  final _commentController = TextEditingController();
+  final _commentService = CommentService();
+  final _auth = FirebaseAuth.instance;
+
+  Future<void> _submitComment() async {
+    if (_commentController.text.isEmpty) return;
+
+    final comment = Comment(
+      id: const Uuid().v4(),
+      recipeId: widget.recipeId,
+      userId: _auth.currentUser!.uid,
+      text: _commentController.text,
+      timestamp: DateTime.now(),
+    );
+
+    await _commentService.addComment(comment);
+    _commentController.clear();
+    FocusScope.of(context).unfocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: Colors.grey[200],
+            child: Icon(Icons.person, size: 18, color: Colors.grey[500]),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _commentController,
+              decoration: InputDecoration(
+                hintText: 'Write a comment...',
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 0),
+              ),
+              maxLines: null,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _submitComment(),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.send, color: widget.accentColor),
+            onPressed: _submitComment,
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+}
