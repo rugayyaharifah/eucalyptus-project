@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:balanced_meal/core/routes.dart';
 import 'package:balanced_meal/core/theme_provider.dart';
+import 'package:balanced_meal/screens/super_admin/admin_management_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -67,13 +69,34 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _isEditing = false;
   final TextEditingController _nameController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
+   String? _userRole;
 
   @override
   void initState() {
     super.initState();
     user = FirebaseAuth.instance.currentUser;
     _nameController.text = user?.displayName ?? '';
+    _fetchUserRole(); 
     debugPrint('User displayName: ${user?.displayName}');
+  }
+
+  Future<void> _fetchUserRole() async {
+    if (user == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user!.uid)
+          .get();
+
+      if (doc.exists) {
+        setState(() {
+          _userRole = doc.get('role') ?? 'user';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching user role: $e');
+    }
   }
 
   @override
@@ -214,6 +237,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ),
             ),
             const SizedBox(height: 20),
+
+            if (_userRole == 'super_admin') ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.admin_panel_settings),
+                  label: const Text('Go to Admin Management'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueGrey,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AdminManagementScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
             // User Info
             Card(
               elevation: 2,

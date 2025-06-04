@@ -1,21 +1,21 @@
 import 'package:balanced_meal/models/comment_model.dart';
+import 'package:balanced_meal/providers/user_role_provider.dart';
 import 'package:balanced_meal/screens/recipe_detail/comment_input_field.dart';
 import 'package:balanced_meal/services/comment_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-class CommentSection extends StatelessWidget {
+class CommentSection extends ConsumerWidget  {
   final String recipeId;
-  final bool isAdmin;
   final User? user;
   final Color accentColor;
   final Color secondaryColor;
 
   const CommentSection({
     required this.recipeId,
-    required this.isAdmin,
     required this.user,
     required this.accentColor,
     required this.secondaryColor,
@@ -23,7 +23,8 @@ class CommentSection extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isAdmin = ref.watch(isAdminProvider);
     debugPrint(isAdmin.toString());
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
@@ -95,7 +96,6 @@ class CommentSection extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: comments.length,
               itemBuilder: (context, index) {
-                
                 final comment = comments[index];
                 final canDelete = isAdmin ||
                     (user?.uid != null &&
@@ -157,7 +157,6 @@ class CommentSection extends StatelessWidget {
                         ),
                       ],
                     ),
-                    
                     trailing: canDelete
                         ? IconButton(
                             icon: Icon(Icons.delete,
@@ -222,8 +221,4 @@ class CommentSection extends StatelessWidget {
       ),
     );
   }
-
-  
-
 }
-

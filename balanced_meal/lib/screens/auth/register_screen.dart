@@ -12,6 +12,8 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final _confirmPasswordController = TextEditingController();
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -57,8 +59,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _confirmPasswordController.dispose();
     _adminPasswordController.dispose();
     super.dispose();
+  }
+
+  String? _validatePasswordConfirmation(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please confirm your password';
+    }
+    if (value != _passwordController.text) {
+      return 'Passwords do not match';
+    }
+    return null;
   }
 
   Future<bool> _verifyAdminPassword(BuildContext context) async {
@@ -182,27 +195,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           value!.length < 6 ? 'Min 6 characters' : null,
                     ),
                     const SizedBox(height: 16),
-                    DropdownButtonFormField<String>(
-                      value: _selectedRole,
+                    TextFormField(
+                      controller: _confirmPasswordController,
+                      obscureText: true,
                       decoration: InputDecoration(
-                        labelText: 'Role',
-                        prefixIcon: const Icon(Icons.group),
+                        labelText: 'Confirm Password',
+                        prefixIcon: const Icon(Icons.lock),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      items: const [
-                        DropdownMenuItem(value: 'user', child: Text('User')),
-                        DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedRole = value;
-                        });
-                      },
-                      validator: (value) =>
-                          value == null ? 'Please select a role' : null,
+                      validator: _validatePasswordConfirmation,
                     ),
+                    
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -247,6 +252,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (_passwordController.text != _confirmPasswordController.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Passwords do not match')),
+      );
+      return;
+    }
 
     // Check if admin role is selected and verify password
     if (_selectedRole == 'admin') {

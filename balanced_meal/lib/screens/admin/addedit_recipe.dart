@@ -15,6 +15,7 @@ class AddEditRecipeScreen extends StatefulWidget {
 }
 
 class _AddEditRecipeScreenState extends State<AddEditRecipeScreen> {
+  bool _isLoading = false;
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -94,7 +95,9 @@ class _AddEditRecipeScreenState extends State<AddEditRecipeScreen> {
   Future<void> _submitRecipe() async {
     if (!_formKey.currentState!.validate()) return;
 
-    String? imageUrl;
+    setState(() => _isLoading = true); 
+    try {
+       String? imageUrl;
     if (_selectedImage != null) {
       imageUrl = await RecipeService().uploadImageAndGetUrl(_selectedImage!);
     }
@@ -115,6 +118,18 @@ class _AddEditRecipeScreenState extends State<AddEditRecipeScreen> {
     await RecipeService().addRecipe(recipe);
     if (!mounted) return;
     Navigator.pop(context);
+    } catch (e){
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false); // Stop loading
+      }
+    }
+
+   
   }
 
   @override
@@ -205,12 +220,25 @@ class _AddEditRecipeScreenState extends State<AddEditRecipeScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _submitRecipe,
-                  child: Text(
-                    widget.recipe == null ? 'Add Recipe' : 'Update Recipe',
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
+                  onPressed:
+                      _isLoading ? null : _submitRecipe, // Disable when loading
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          widget.recipe == null
+                              ? 'Add Recipe'
+                              : 'Update Recipe',
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
                 ),
               ),
             ],

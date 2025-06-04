@@ -8,6 +8,8 @@ class UserRoleNotifier extends StateNotifier<AsyncValue<String>> {
     _init();
   }
 
+ 
+
   Future<void> _init() async {
     try {
       final user = FirebaseAuth.instance.currentUser;
@@ -28,15 +30,33 @@ class UserRoleNotifier extends StateNotifier<AsyncValue<String>> {
   }
 }
 
-final userRoleProvider =
-    StateNotifierProvider<UserRoleNotifier, AsyncValue<String>>((ref) {
-  return UserRoleNotifier();
-});
-
-final isAdminProvider = Provider<bool>((ref) {
+final isSuperAdminProvider = Provider<bool>((ref) {
   return ref.watch(userRoleProvider).when(
-        data: (role) => role == 'admin',
+        data: (role) => role == 'super_admin',
         loading: () => false,
         error: (_, __) => false,
       );
 });
+
+final userRoleProvider = StreamProvider<String>((ref) {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return const Stream.empty();
+
+  return FirebaseFirestore.instance
+      .collection('users')
+      .doc(user.uid)
+      .snapshots()
+      .map((snapshot) => snapshot.data()?['role'] ?? 'user');
+});
+
+final isAdminProvider = Provider<bool>((ref) {
+  final roleAsync = ref.watch(userRoleProvider);
+
+  return roleAsync.when(
+    data: (role) => role == 'admin' || role == 'super_admin',
+    loading: () => false,
+    error: (_, __) => false,
+  );
+});
+
+

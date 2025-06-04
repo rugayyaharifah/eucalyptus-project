@@ -39,6 +39,8 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+ 
+
   List<Widget> get _screens {
     if (_userRole == 'admin') {
       return [
@@ -229,6 +231,15 @@ class __RecipeManagementScreenState extends State<_RecipeManagementScreen> {
     super.dispose();
   }
 
+   List<Recipe> _filterRecipesBySearch(List<Recipe> recipes, String query) {
+    if (query.isEmpty) return recipes;
+
+    return recipes.where((recipe) {
+      return recipe.title.toLowerCase().contains(query.toLowerCase()) ||
+          recipe.description.toLowerCase().contains(query.toLowerCase());
+    }).toList();
+  }
+
   List<Recipe> _filterRecipesByCategoryAndSearch(List<Recipe> recipes) {
     // First filter by category
     List<Recipe> filteredRecipes = _selectedCategory == 'All'
@@ -329,8 +340,7 @@ class __RecipeManagementScreenState extends State<_RecipeManagementScreen> {
             SizedBox(
               height: 220,
               child: StreamBuilder<List<Recipe>>(
-                stream: RecipeService()
-                    .getRecommendedRecipes(), // Use the new method here
+                stream: RecipeService().getRecommendedRecipes(),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return Center(
@@ -350,7 +360,19 @@ class __RecipeManagementScreenState extends State<_RecipeManagementScreen> {
                     );
                   }
 
-                  final recommendedRecipes = snapshot.data!;
+                  // Apply search filter to recommended recipes
+                  final recommendedRecipes =
+                      _filterRecipesBySearch(snapshot.data!, _searchQuery);
+
+                  if (recommendedRecipes.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'No recommended recipes match your search',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                    );
+                  }
+
                   return ListView.builder(
                     scrollDirection: Axis.horizontal,
                     itemCount: recommendedRecipes.length,
@@ -362,6 +384,7 @@ class __RecipeManagementScreenState extends State<_RecipeManagementScreen> {
                 },
               ),
             ),
+
             const SizedBox(height: 24),
 
             // Categories section

@@ -1,8 +1,10 @@
 import 'package:balanced_meal/models/recipe_model.dart';
+import 'package:balanced_meal/providers/user_role_provider.dart';
 import 'package:balanced_meal/screens/recipe_detail/comment_section.dart';
 import 'package:balanced_meal/screens/recipe_detail/nearby_stores_section.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class RecipeDetailContent extends StatefulWidget {
   final Recipe recipe;
@@ -28,6 +30,8 @@ class RecipeDetailContent extends StatefulWidget {
 class _RecipeDetailContentState extends State<RecipeDetailContent> {
   @override
   Widget build(BuildContext context) {
+    
+
     final theme = Theme.of(context);
     final isDarkMode = theme.brightness == Brightness.dark;
     final cardColor = isDarkMode ? Colors.grey[850] : Colors.white;
@@ -342,14 +346,21 @@ class _RecipeDetailContentState extends State<RecipeDetailContent> {
                 const SizedBox(height: 24),
                 Divider(height: 1, color: Colors.grey[600]),
                 const SizedBox(height: 16),
-                CommentSection(
-                  recipeId: widget.recipe.id,
-                  isAdmin: widget.isAdmin,
-                  user: widget.user,
-                  accentColor: widget.accentColor,
-                  secondaryColor: isDarkMode
-                      ? Colors.grey[800]!.withOpacity(0.8)
-                      : widget.secondaryColor,
+                Consumer(
+                  builder: (context, ref, _) {
+                    final user = FirebaseAuth.instance.currentUser;
+
+                   
+
+                    return CommentSection(
+                      recipeId: widget.recipe.id,
+                      user: user,
+                      accentColor: widget.accentColor,
+                      secondaryColor: isDarkMode
+                          ? Colors.grey[800]!.withOpacity(0.8)
+                          : widget.secondaryColor,
+                    );
+                  },
                 ),
               ],
             ),

@@ -22,7 +22,7 @@ class _NearbyStoresSectionState extends State<NearbyStoresSection> {
   bool _isLoadingStores = false;
   List<dynamic> _nearbyStores = [];
   Position? _currentPosition;
-  double _selectedRadius = 1000;
+  double _selectedRadius = 2000;
   final List<double> _radiusOptions = [500, 1000, 2000, 3000, 4000, 5000];
 
   Future<void> _openStoreInMaps(String storeName, String address) async {

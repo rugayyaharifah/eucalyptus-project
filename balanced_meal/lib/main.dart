@@ -2,6 +2,7 @@ import 'package:balanced_meal/core/auth_wrapper.dart';
 import 'package:balanced_meal/core/routes.dart';
 import 'package:balanced_meal/core/theme_provider.dart'; // Add this import
 import 'package:balanced_meal/models/recipe_model.dart';
+import 'package:balanced_meal/providers/user_role_provider.dart';
 import 'package:balanced_meal/screens/admin/addedit_recipe.dart';
 import 'package:balanced_meal/screens/home_all_screen.dart';
 import 'package:balanced_meal/screens/home_screen.dart';
@@ -10,6 +11,8 @@ import 'package:balanced_meal/screens/login_screen.dart';
 import 'package:balanced_meal/screens/auth/register_screen.dart';
 import 'package:balanced_meal/screens/meal_planner_screen.dart';
 import 'package:balanced_meal/screens/recipe_detail/recipe_detail_screen.dart';
+import 'package:balanced_meal/screens/super_admin/admin_management_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +36,10 @@ class MyApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+     FirebaseAuth.instance.authStateChanges().listen((user) {
+      // This will automatically invalidate any dependent providers
+      ref.invalidate(userRoleProvider);
+    });
     final theme = ref.watch(themeProvider);
 
     return MaterialApp(
@@ -55,6 +62,7 @@ class MyApp extends ConsumerWidget {
         AppRoutes.mealPlan: (context) => const MealPlannerScreen(),
         AppRoutes.home: (context) => const HomeScreen(),
         AppRoutes.allRecipe: (context) => const HomeAllScreen(),
+        AppRoutes.adminManegement: (context) => const AdminManagementScreen(),
       },
     );
   }
