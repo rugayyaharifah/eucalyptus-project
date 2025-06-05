@@ -126,6 +126,19 @@ class RecipeService {
     }
   }
 
+  Future<Recipe> getRecipeById(String recipeId) async {
+    try {
+      final doc = await _firestore.collection('recipes').doc(recipeId).get();
+      if (doc.exists) {
+        return Recipe.fromMap(doc.data()!);
+      } else {
+        throw Exception('Recipe not found');
+      }
+    } catch (e) {
+      throw Exception('Failed to fetch recipe: $e');
+    }
+  }
+
   // Admin-only: Delete recipe
   Future<void> deleteRecipe(String id) async {
     await _firestore.collection('recipes').doc(id).delete();

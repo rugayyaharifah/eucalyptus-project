@@ -1,5 +1,6 @@
 // lib/screens/meal_planner_screen.dart
 import 'package:balanced_meal/core/routes.dart';
+import 'package:balanced_meal/models/recipe_model.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:balanced_meal/models/meal_plan_model.dart';
@@ -124,72 +125,88 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
     );
   }
 
-  Widget _buildMealRow(BuildContext context, String mealType,
-      MealEntry mealEntry, MealPlan dayPlan, DateTime date) {
-    final theme = Theme.of(context);
-    final isEmpty = mealEntry.name.isEmpty;
+ Widget _buildMealRow(BuildContext context, String mealType,
+    MealEntry mealEntry, MealPlan dayPlan, DateTime date) {
+  final theme = Theme.of(context);
+  final isEmpty = mealEntry.name.isEmpty;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      decoration: BoxDecoration(
-        color: isEmpty
-            ? theme.colorScheme.surfaceVariant
-            : theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => _showMealEditor(mealType.toLowerCase(), dayPlan, date),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                width: 80,
-                padding: const EdgeInsets.only(right: 8),
-                child: Text(
-                  mealType,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                    color: theme.colorScheme.primary,
-                  ),
+  return Container(
+    margin: const EdgeInsets.symmetric(vertical: 4),
+    decoration: BoxDecoration(
+      color: isEmpty
+          ? theme.colorScheme.surfaceVariant
+          : theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _showMealEditor(mealType.toLowerCase(), dayPlan, date),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 80,
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                mealType,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.primary,
                 ),
               ),
-              Expanded(
-                child: Text(
-                  isEmpty ? 'Tap to add meal' : mealEntry.name,
-                  style: TextStyle(
-                    color: isEmpty
-                        ? theme.colorScheme.onSurface.withOpacity(0.6)
-                        : null,
-                  ),
+            ),
+            Expanded(
+              child: Text(
+                isEmpty ? 'Tap to add meal' : mealEntry.name,
+                style: TextStyle(
+                  color: isEmpty
+                      ? theme.colorScheme.onSurface.withOpacity(0.6)
+                      : null,
                 ),
+                overflow: TextOverflow
+                    .ellipsis, // This adds the "..." when text is too long
+                maxLines: 1,
               ),
-              if (!isEmpty) ...[
-                if (mealEntry.recipeId != null)
-                  IconButton(
-                    icon: const Icon(Icons.open_in_new, size: 18),
-                    color: Colors.blue,
-                    onPressed: () {
+            ),
+            if (!isEmpty) ...[
+              if (mealEntry.recipeId != null)
+                IconButton(
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  color: Colors.blue,
+                  onPressed: () async {
+                    try {
+                      final recipe = await RecipeService()
+                          .getRecipeById(mealEntry.recipeId!);
+                      if (!mounted) return;
                       Navigator.pushNamed(
                         context,
                         AppRoutes.recipeDetail,
-                        arguments: mealEntry.recipeId,
+                        arguments: recipe.id,
                       );
-                    },
-                  ),
-                Icon(Icons.edit,
-                    size: 18, color: theme.iconTheme.color?.withOpacity(0.5)),
-              ],
+                    } catch (e) {
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: const Text('Recipe no longer exists'),
+                          backgroundColor: theme.colorScheme.error,
+                        ),
+                      );
+                    }
+                  },
+                ),
+              Icon(Icons.edit,
+                  size: 18, color: theme.iconTheme.color?.withOpacity(0.5)),
             ],
-          ),
+          ]
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> _showMealEditor(
-      String mealType, MealPlan dayPlan, DateTime date) async {
+        String mealType, MealPlan dayPlan, DateTime date) async {
     final theme = Theme.of(context);
     final recipeService = RecipeService();
     final favoriteRecipes =
@@ -199,6 +216,17 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
     final notesController = TextEditingController(text: mealEntry.notes ?? '');
     String? selectedRecipeId = mealEntry.recipeId;
 
+    // Get the currently selected recipe details if it exists but isn't in favorites
+    Recipe? currentRecipe;
+    if (selectedRecipeId != null &&
+        !favoriteRecipes.any((r) => r.id == selectedRecipeId)) {
+      try {
+        currentRecipe = await recipeService.getRecipeById(selectedRecipeId!);
+      } catch (e) {
+        // Recipe might not exist anymore
+        selectedRecipeId = null;
+      }
+    }
     await showDialog(
       context: context,
       builder: (context) {
@@ -216,6 +244,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     TextField(
+                      
                       controller: nameController,
                       decoration: InputDecoration(
                         labelText: 'Meal Name',
@@ -230,6 +259,7 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
+                      isExpanded: true, 
                       value: selectedRecipeId,
                       decoration: InputDecoration(
                         labelText: 'Link to Recipe (Optional)',
@@ -244,10 +274,25 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                       items: [
                         const DropdownMenuItem(
                             value: null, child: Text('None')),
+                        if (currentRecipe != null)
+                          DropdownMenuItem(
+                            value: currentRecipe.id,
+                            child:
+                                SizedBox(
+                                  width: 200,
+                                  child: Text('${currentRecipe.title}', overflow: TextOverflow
+                                  .ellipsis, // This adds the "..." when text is too long
+                              maxLines: 1,
+                                )
+                            ),
+                          ),
                         ...favoriteRecipes.map((recipe) {
                           return DropdownMenuItem(
                             value: recipe.id,
-                            child: Text(recipe.title),
+                            child: Text(recipe.title, overflow: TextOverflow
+                                  .ellipsis, // This adds the "..." when text is too long
+                              maxLines: 1,
+                            ),
                           );
                         }).toList(),
                       ],
@@ -255,9 +300,15 @@ class _MealPlannerScreenState extends State<MealPlannerScreen> {
                         setState(() {
                           selectedRecipeId = value;
                           if (value != null) {
-                            nameController.text = favoriteRecipes
-                                .firstWhere((r) => r.id == value)
-                                .title;
+                            // Find the recipe in either favorites or current recipe
+                            final recipe = favoriteRecipes.firstWhere(
+                              (r) => r.id == value,
+                              orElse: () => currentRecipe != null &&
+                                      currentRecipe.id == value
+                                  ? currentRecipe
+                                  : throw Exception('Recipe not found'),
+                            );
+                            nameController.text = recipe.title;
                           }
                         });
                       },
